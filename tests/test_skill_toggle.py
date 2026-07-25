@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -463,6 +464,30 @@ class SkillToggleTests(unittest.TestCase):
             self.assertEqual([target["position"] for target in targets], [1, 2])
             self.assertEqual({target["state"] for target in targets}, {"enabled", "disabled"})
             self.assertEqual(module.select_entries("2", registry)[0]["display_name"], "disabled-skill")
+
+    def test_print_entries_groups_states_and_prints_totals(self):
+        with TemporaryDirectory() as temp:
+            home = Path(temp)
+            items = []
+            for name, state in (("z-enabled", "enabled"), ("a-disabled", "disabled"), ("m-collision", "collision")):
+                item = make_entry(home, name=name)
+                source = Path(item["source_path"])
+                disabled = Path(item["disabled_path"])
+                if state in {"enabled", "collision"}:
+                    source.mkdir(parents=True)
+                if state in {"disabled", "collision"}:
+                    disabled.mkdir(parents=True)
+                items.append(item)
+            output = io.StringIO()
+            with patch("sys.stdout", output):
+                module.print_entries(items, False, False)
+
+            text = output.getvalue()
+            self.assertLess(text.index("COLLISIONS (1)"), text.index("DISABLED (1)"))
+            self.assertLess(text.index("DISABLED (1)"), text.index("ENABLED (1)"))
+            self.assertIn("TOTAL RAW ENTRIES: 3", text)
+            self.assertIn("Use st context for numbered actions", text)
+            self.assertNotIn("1.)", text)
 
     def test_operation_plan_explains_file_and_config_actions(self):
         with TemporaryDirectory() as temp:

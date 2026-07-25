@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import hashlib
 import json
 import os
@@ -29,6 +30,21 @@ ANSI_RED = "\033[31m"
 ANSI_CYAN = "\033[36m"
 ANSI_BLUE = "\033[34m"
 ANSI_ESCAPE = re.compile(r"\033\[[0-9;]*m")
+STATE_ORDER = {"collision": 0, "disabled": 1, "enabled": 2, "mixed": 3, "missing": 4}
+STATE_LABELS = {
+    "collision": "COLLISIONS",
+    "disabled": "DISABLED",
+    "enabled": "ENABLED",
+    "mixed": "MIXED",
+    "missing": "MISSING",
+}
+STATE_COLORS = {
+    "collision": ANSI_RED,
+    "disabled": ANSI_YELLOW,
+    "enabled": ANSI_GREEN,
+    "mixed": ANSI_YELLOW,
+    "missing": ANSI_RED,
+}
 
 
 def now_stamp() -> str:
@@ -1010,25 +1026,48 @@ done
     return location["notifier_script"], location["notifier_plist"]
 
 
-def print_entries(entries: list[dict], as_json: bool, color: bool = False) -> None:
+def print_entries(
+    entries: list[dict],
+    as_json: bool,
+    color: bool = False,
+    config_path: Path | None = None,
+    total_label: str = "RAW ENTRIES",
+) -> None:
     rendered = []
     for item in entries:
-        rendered.append({**item, "observed_state": entry_status(item)})
+        rendered.append({**item, "observed_state": entry_status(item, config_path)})
     if as_json:
         print(json.dumps(rendered, indent=2))
         return
     lines = []
-    for index, item in enumerate(rendered, 1):
-        state = item["observed_state"]
-        state_color = {
-            "enabled": ANSI_GREEN,
-            "disabled": ANSI_YELLOW,
-            "collision": ANSI_RED,
-        }.get(state, ANSI_RED)
-        lines.append(
-            f"{index:>3}.)  {colorize(f'{state:<9}', state_color, color)}  "
-            f"{item['display_name'] or item['id']}  ({item['id']})"
+    ordered_states = sorted(
+        {item["observed_state"] for item in rendered},
+        key=lambda state: STATE_ORDER.get(state, 99),
+    )
+    for state in ordered_states:
+        state_items = sorted(
+            (item for item in rendered if item["observed_state"] == state),
+            key=lambda item: ((item["display_name"] or item["id"]).casefold(), item["id"]),
         )
+        state_color = STATE_COLORS.get(state, ANSI_RED)
+        label = f"{STATE_LABELS.get(state, state.upper())} ({len(state_items)})"
+        lines.append(colorize(label, ANSI_BOLD + state_color, color))
+        for item in state_items:
+            lines.append(
+                f"  {colorize(f'{state:<9}', state_color, color)}  "
+                f"{item['display_name'] or item['id']}  ({item['id']})"
+            )
+    counts = Counter(item["observed_state"] for item in rendered)
+    lines.extend([
+        "",
+        colorize(f"TOTAL {total_label}: {len(rendered)}", ANSI_BOLD + ANSI_CYAN, color),
+        (
+            f"ENABLED: {counts.get('enabled', 0)}  |  "
+            f"DISABLED: {counts.get('disabled', 0)}  |  "
+            f"COLLISIONS: {counts.get('collision', 0)}"
+        ),
+        "Use st context for numbered actions.",
+    ])
     print("\n".join(format_box("SKILL TOGGLE RESULTS", lines or ["no matches"], color)))
 
 
@@ -1158,10 +1197,10 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"registry missing: run {Path(__file__).name} init")
     registry = load_registry(location["registry"])
     if args.command == "list":
-        print_entries(registry["entries"], args.json, color)
+        print_entries(registry["entries"], args.json, color, location["config"], "RAW ENTRIES")
         return 0
     if args.command == "find":
-        print_entries(resolve(args.query, registry), args.json, color)
+        print_entries(resolve(args.query, registry), args.json, color, location["config"], "MATCHES")
         return 0
     if args.command == "note":
         note = add_note(location, registry, args.query, " ".join(args.text))
