@@ -78,7 +78,7 @@ Always check the displayed target before changing anything. If you make a mistak
 
 ```text
 skill-toggle context         Show expected active and disabled-ready items
-skill-toggle list            Show every registered item and its state
+skill-toggle list            Show raw entries grouped: collisions, disabled, enabled
 skill-toggle find QUERY      Look up names, aliases, IDs, and paths
 skill-toggle on QUERY        Enable a skill or plugin
 skill-toggle off QUERY       Disable a skill or plugin
@@ -99,6 +99,8 @@ st note 12 "Restore only after review."
 ```
 
 The tool groups related registry copies under one displayed name. `st --json context` returns the same positions, states, IDs, and paths for scripts. Human output is boxed and automatically colored in a terminal; use `st --color never context` for plain output.
+
+`list` is the raw registry view, so it can contain more entries than `context`. It groups entries visually as collisions, disabled, then enabled, with totals at the bottom. Use `context` when you need numbered positions for `on`, `off`, or `note`.
 
 You do not have to run `find` first. It is only a preview tool. Direct commands can resolve a skill name, plugin name, registry ID, source path, or disabled path.
 
