@@ -26,7 +26,7 @@ This tool manages local files and Codex configuration. It does not delete disabl
 - Save receipts and original paths for recovery.
 - Prepare an optional macOS notification when Codex starts.
 
-The exact skill list injected into an already-running Codex task is supplied by the Codex runtime. The local command cannot read that hidden task manifest directly. Its `context` report clearly labels itself as the expected configuration/filesystem view; confirm the exact injected list in a fresh Codex task.
+`st` can read your local files and config, but Codex loads the hidden skill list before `st` starts. The `context` report is therefore the expected local view; open a fresh Codex task when you need to compare the live list.
 
 ## Requirements
 

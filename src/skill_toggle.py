@@ -880,8 +880,8 @@ def build_context_report(location: dict[str, Path], registry: dict) -> dict:
         "runtime_injection": {
             "status": "not-directly-introspectable",
             "note": (
-                "The local CLI cannot read the developer-provided skill manifest inside an existing task. "
-                "expected_active is the config/filesystem projection; verify the exact injected list in a fresh task."
+                "st can read your files and config, but Codex loads its hidden skill list before st starts. "
+                "This is the expected local view; open a fresh task to compare the live list."
             ),
         },
         "expected_active": expected_active,
@@ -931,17 +931,18 @@ def reconcile(location: dict[str, Path], registry: dict) -> tuple[Path | None, l
 
 def format_context_report(report: dict) -> str:
     lines = [
-        f"EXACT RUNTIME INJECTION: {report['runtime_injection']['status']}",
-        report["runtime_injection"]["note"],
-        "",
         "NUMBERED INVENTORY (use the position with st on/off/note)",
-        "#    STATUS     KIND             NAME",
+        "#.)  STATUS     KIND             NAME",
     ]
     for target in report.get("entries", []):
         lines.append(
-            f"{target['position']:>3}  {target['state']:<9}  {target['kind']:<16}  {target['name']}"
+            f"{target['position']:>3}.)  {target['state']:<9}  {target['kind']:<16}  {target['name']}"
         )
-    lines.extend(["", "JSON: add --json for machine-readable positions, states, IDs, and paths."])
+    lines.extend([
+        "",
+        f"NOTE: {report['runtime_injection']['note']}",
+        "JSON: add --json for machine-readable positions, states, IDs, and paths.",
+    ])
     return "\n".join(lines) + "\n"
 
 
@@ -1025,7 +1026,7 @@ def print_entries(entries: list[dict], as_json: bool, color: bool = False) -> No
             "collision": ANSI_RED,
         }.get(state, ANSI_RED)
         lines.append(
-            f"{index:>3}  {colorize(f'{state:<9}', state_color, color)}  "
+            f"{index:>3}.)  {colorize(f'{state:<9}', state_color, color)}  "
             f"{item['display_name'] or item['id']}  ({item['id']})"
         )
     print("\n".join(format_box("SKILL TOGGLE RESULTS", lines or ["no matches"], color)))
@@ -1037,10 +1038,7 @@ def print_context_report(report: dict, as_json: bool, color: bool = False) -> No
         return
     runtime = report["runtime_injection"]
     lines = [
-        f"EXACT RUNTIME INJECTION: {runtime['status']}",
-        runtime["note"],
-        "",
-        "#    STATUS     KIND             NAME",
+        "#.)  STATUS     KIND             NAME",
     ]
     for target in report.get("entries", []):
         state = target["state"]
@@ -1052,13 +1050,14 @@ def print_context_report(report: dict, as_json: bool, color: bool = False) -> No
             "missing": ANSI_RED,
         }.get(state, ANSI_RED)
         status = colorize(f"{state:<9}", state_color, color)
-        lines.append(f"{target['position']:>3}  {status}  {target['kind']:<16}  {target['name']}")
+        lines.append(f"{target['position']:>3}.)  {status}  {target['kind']:<16}  {target['name']}")
     lines.extend([
         "",
         "Use the number: st --dry-run off 12, then st off 12.",
         "Use --yes for a non-interactive confirmed change; --json is machine-readable.",
     ])
     print("\n".join(format_box("CODEX SKILL TOGGLE", lines, color)))
+    print(f"NOTE: {runtime['note']}")
 
 
 def print_notes(notes: list[dict], as_json: bool, color: bool = False) -> None:
