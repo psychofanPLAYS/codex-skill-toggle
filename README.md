@@ -43,18 +43,17 @@ git clone https://github.com/psychofanPLAYS/codex-skill-toggle.git
 cd codex-skill-toggle
 mkdir -p "$HOME/.local/bin"
 ln -sfn "$PWD/bin/skill-toggle" "$HOME/.local/bin/skill-toggle"
-ln -sfn "$PWD/bin/at" "$HOME/.local/bin/at"
+ln -sfn "$PWD/bin/st" "$HOME/.local/bin/st"
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-`at` is a short alias for `skill-toggle`. For example, these two commands do the same thing:
+`st` is a short alias for `skill-toggle`. For example, these two commands do the same thing:
 
 ```sh
 skill-toggle context
-at context
+st context
 ```
 
-If you use the `at` alias, remember that it is a short personal command name. On systems that already provide a scheduling command named `at`, your personal `~/.local/bin` version takes precedence.
 
 ## First setup
 
