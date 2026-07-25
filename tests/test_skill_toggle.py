@@ -427,6 +427,17 @@ class SkillToggleTests(unittest.TestCase):
         self.assertNotIn("\033[", "\n".join(plain))
         self.assertIn("\033[", "\n".join(colored))
 
+    def test_context_snapshot_uses_human_positions_and_plain_note(self):
+        report = {
+            "runtime_injection": {"status": "not-directly-introspectable", "note": "simple explanation"},
+            "entries": [{"position": 1, "state": "enabled", "kind": "local_skill", "name": "model-search"}],
+        }
+
+        text = module.format_context_report(report)
+
+        self.assertIn("1.)  enabled", text)
+        self.assertIn("NOTE: simple explanation", text)
+
     def test_color_mode_auto_disables_when_output_is_not_a_tty(self):
         with patch.object(module.sys.stdout, "isatty", return_value=False):
             self.assertFalse(module.should_color("auto", False))
