@@ -1161,6 +1161,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("init", help="build the registry from receipts and disabled folders")
     subparsers.add_parser("list", help="list every registered entry")
     subparsers.add_parser("context", aliases=["report"], help="show expected active skills and disabled-ready inventory")
+    subparsers.add_parser("ui", help="open the optional Textual dashboard")
     subparsers.add_parser("reconcile", help="quarantine rehydrated copies of configured-disabled bundles")
     subparsers.add_parser("notify", help="save the context report and send a macOS notification")
     subparsers.add_parser("prepare-notifier", help="write, but do not arm, the app-restart notifier")
@@ -1196,6 +1197,10 @@ def main(argv: list[str] | None = None) -> int:
     if not location["registry"].exists():
         raise SystemExit(f"registry missing: run {Path(__file__).name} init")
     registry = load_registry(location["registry"])
+    if args.command == "ui":
+        from skill_toggle_ui import run_ui
+
+        return run_ui(location, registry, build_context_report, load_registry)
     if args.command == "list":
         print_entries(registry["entries"], args.json, color, location["config"], "RAW ENTRIES")
         return 0

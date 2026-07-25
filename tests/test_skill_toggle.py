@@ -12,6 +12,12 @@ module = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 SPEC.loader.exec_module(module)
 
+UI_SCRIPT = Path(__file__).parents[1] / "src" / "skill_toggle_ui.py"
+UI_SPEC = importlib.util.spec_from_file_location("skill_toggle_ui", UI_SCRIPT)
+ui = importlib.util.module_from_spec(UI_SPEC)
+assert UI_SPEC.loader is not None
+UI_SPEC.loader.exec_module(ui)
+
 
 def make_entry(tmp_path, *, name="canva", skill_names=None):
     source = tmp_path / "active" / name
@@ -32,6 +38,18 @@ def make_entry(tmp_path, *, name="canva", skill_names=None):
 
 
 class SkillToggleTests(unittest.TestCase):
+    def test_ui_rows_sort_collision_disabled_enabled_then_name(self):
+        report = {"entries": [
+            {"position": 1, "state": "enabled", "kind": "local_skill", "name": "zeta", "entry_count": 1, "ids": ["z"]},
+            {"position": 2, "state": "collision", "kind": "plugin_bundle", "name": "beta", "entry_count": 2, "ids": ["b1", "b2"]},
+            {"position": 3, "state": "disabled", "kind": "plugin_skill", "name": "alpha", "entry_count": 1, "ids": ["a"]},
+        ]}
+
+        rows = ui.build_rows(report)
+
+        self.assertEqual([row["name"] for row in rows], ["beta", "alpha", "zeta"])
+        self.assertEqual([row["position"] for row in rows], [1, 2, 3])
+
     def test_resolve_exact_skill_returns_all_copies(self):
         with TemporaryDirectory() as temp:
             tmp_path = Path(temp)

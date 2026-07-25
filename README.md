@@ -34,7 +34,13 @@ This tool manages local files and Codex configuration. It does not delete disabl
 - Codex Desktop or Codex CLI
 - macOS for the notification feature
 
-The tool uses only Python's standard library.
+The standard commands use only Python's standard library. The optional
+dashboard uses [Textual](https://textual.textualize.io/); install it only if
+you want the dashboard:
+
+```sh
+python3 -m pip install -r requirements-ui.txt
+```
 
 ## Install
 
@@ -85,6 +91,20 @@ skill-toggle off QUERY       Disable a skill or plugin
 skill-toggle verify          Check paths and registry consistency
 skill-toggle reconcile       Repair reappeared disabled plugin copies
 ```
+
+### Optional dashboard
+
+Open a read-only terminal dashboard with filtering, status colors, row details,
+refresh, and sorting:
+
+```sh
+st ui
+```
+
+Use the filter box to narrow the rows. Press `s` to cycle status/name/kind
+sorting, `r` to refresh from disk, and `q` to quit. Changes still use the
+explicit `st on` and `st off` commands, so opening the dashboard cannot change
+your skills by accident.
 
 ### Use the displayed number
 
