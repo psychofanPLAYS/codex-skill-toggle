@@ -1,0 +1,26 @@
+name: Bug report
+description: Report a reproducible problem with codex-skill-toggle
+title: "bug: "
+labels: [bug]
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Include the command and observed output. Remove private paths or secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+  - type: input
+    id: platform
+    attributes:
+      label: Platform

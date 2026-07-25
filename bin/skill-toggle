@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec /usr/bin/env python3 "$repo_root/src/skill_toggle.py" "$@"
