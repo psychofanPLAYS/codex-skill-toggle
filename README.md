@@ -19,6 +19,8 @@ This tool manages local files and Codex configuration. It does not delete disabl
 - Turn local skills or complete plugin bundles on and off.
 - Turn one skill inside a plugin on or off through Codex configuration.
 - Show the expected active skills and disabled skills ready to restore.
+- Show enabled and disabled entries together in one numbered, grouped inventory.
+- Preview every toggle as a detailed plan, then require a quick confirmation before changing anything.
 - Detect when Codex recreates a disabled plugin and quarantine the copy safely.
 - Attach notes to a skill, plugin, registry ID, or path.
 - Save receipts and original paths for recovery.
@@ -83,6 +85,20 @@ skill-toggle off QUERY       Disable a skill or plugin
 skill-toggle verify          Check paths and registry consistency
 skill-toggle reconcile       Repair reappeared disabled plugin copies
 ```
+
+### Use the displayed number
+
+Run `skill-toggle context` (or `st context`) to see one numbered list. The number works anywhere a query works:
+
+```sh
+st context
+st --dry-run off 12       # show the exact action; change nothing
+st off 12                  # show the plan, then ask Proceed? [y/N]
+st on 12 --yes             # confirmed form for scripts or automation
+st note 12 "Restore only after review."
+```
+
+The tool groups related registry copies under one displayed name. `st --json context` returns the same positions, states, IDs, and paths for scripts. Human output is boxed and automatically colored in a terminal; use `st --color never context` for plain output.
 
 You do not have to run `find` first. It is only a preview tool. Direct commands can resolve a skill name, plugin name, registry ID, source path, or disabled path.
 

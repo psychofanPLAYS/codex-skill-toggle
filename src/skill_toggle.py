@@ -20,6 +20,15 @@ NOTES_VERSION = 1
 RECEIPT_LINE = re.compile(r"^- `([^`]+)` -> `([^`]+)`")
 SKILL_NAME = re.compile(r"^name:\s*[\"']?([^\"'\n]+)", re.MULTILINE)
 PLUGIN_HEADER = re.compile(r'^\[plugins\."([^"]+)"\]\s*$')
+ANSI_RESET = "\033[0m"
+ANSI_BOLD = "\033[1m"
+ANSI_DIM = "\033[2m"
+ANSI_GREEN = "\033[32m"
+ANSI_YELLOW = "\033[33m"
+ANSI_RED = "\033[31m"
+ANSI_CYAN = "\033[36m"
+ANSI_BLUE = "\033[34m"
+ANSI_ESCAPE = re.compile(r"\033\[[0-9;]*m")
 
 
 def now_stamp() -> str:
@@ -28,6 +37,29 @@ def now_stamp() -> str:
 
 def iso_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def should_color(mode: str, as_json: bool) -> bool:
+    """Choose color safely: JSON and redirected output never get ANSI bytes."""
+    if as_json or mode == "never":
+        return False
+    return mode == "always" or sys.stdout.isatty()
+
+
+def colorize(text: str, code: str, enabled: bool) -> str:
+    return f"{code}{text}{ANSI_RESET}" if enabled else text
+
+
+def format_box(title: str, lines: list[str], color: bool = False) -> list[str]:
+    """Return a Unicode box whose visible columns stay aligned with ANSI color."""
+    visible = [ANSI_ESCAPE.sub("", line) for line in lines]
+    width = max([len(ANSI_ESCAPE.sub("", title)), *[len(line) for line in visible], 2])
+    rendered_title = colorize(title, ANSI_BOLD + ANSI_CYAN, color)
+    result = [f"┌─ {rendered_title} " + "─" * max(0, width - len(title)) + "┐"]
+    for line, plain in zip(lines, visible):
+        result.append(f"│ {line}{' ' * (width - len(plain))} │")
+    result.append(f"└{'─' * (width + 2)}┘")
+    return result
 
 
 def paths(codex_home: Path) -> dict[str, Path]:
@@ -613,7 +645,46 @@ def write_operation_receipt(location: dict[str, Path], operation: str, entries: 
     return receipt
 
 
-def select_entries(query: str, registry: dict) -> list[dict]:
+def context_targets(location: dict[str, Path], registry: dict) -> list[dict]:
+    """Build the single numbered inventory used by humans and numeric commands."""
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    for item in registry.get("entries", []):
+        key = (item.get("kind", "unknown"), item.get("display_name") or item.get("id", ""))
+        grouped.setdefault(key, []).append(item)
+
+    kind_order = {"local_skill": 0, "plugin_bundle": 1, "plugin_skill": 2}
+    targets: list[dict] = []
+    for (kind, name), items in sorted(
+        grouped.items(), key=lambda pair: (kind_order.get(pair[0][0], 99), pair[0][1].casefold())
+    ):
+        states = {entry_status(item, location.get("config")) for item in items}
+        state = states.pop() if len(states) == 1 else "mixed"
+        if "collision" in states or state == "collision":
+            state = "collision"
+        targets.append({
+            "position": len(targets) + 1,
+            "name": name,
+            "kind": kind,
+            "state": state,
+            "ids": [item["id"] for item in items],
+            "source_paths": sorted({item["source_path"] for item in items}),
+            "disabled_paths": sorted({item["disabled_path"] for item in items}),
+            "entry_count": len(items),
+            "query": name,
+        })
+    return targets
+
+
+def select_entries(query: str, registry: dict, config_path: Path | None = None) -> list[dict]:
+    if normalize(query).isdigit():
+        position = int(normalize(query))
+        location = {"config": config_path} if config_path else {}
+        targets = context_targets(location, registry)
+        if position < 1 or position > len(targets):
+            raise SystemExit(f"position {position} is outside the displayed range 1-{len(targets)}")
+        target = targets[position - 1]
+        ids = set(target["ids"])
+        return [item for item in registry.get("entries", []) if item["id"] in ids]
     matches = resolve(query, registry)
     if not matches:
         raise SystemExit(f"no skill or plugin matches {query!r}")
@@ -644,7 +715,7 @@ def save_notes(path: Path, notes: dict) -> None:
 
 
 def add_note(location: dict[str, Path], registry: dict, query: str, text: str) -> dict:
-    matches = select_entries(query, registry)
+    matches = select_entries(query, registry, location["config"])
     target_names = sorted({item.get("display_name") or item["id"] for item in matches})
     target_ids = sorted({item["id"] for item in matches})
     target_kind = matches[0].get("kind")
@@ -670,7 +741,7 @@ def list_notes(location: dict[str, Path], registry: dict, query: str | None = No
     notes = load_notes(location["notes"])["notes"]
     if not query:
         return sorted(notes, key=lambda item: item.get("updated_at", ""), reverse=True)
-    matches = resolve(query, registry)
+    matches = select_entries(query, registry, location["config"]) if normalize(query).isdigit() else resolve(query, registry)
     if not matches:
         exact_note = [item for item in notes if normalize(item["id"]) == normalize(query)]
         if exact_note:
@@ -695,8 +766,35 @@ def delete_note(location: dict[str, Path], note_id: str) -> bool:
     return True
 
 
+def operation_plan(location: dict[str, Path], registry: dict, query: str, operation: str) -> list[str]:
+    """Describe a pending operation without touching config or the filesystem."""
+    entries = select_entries(query, registry, location["config"])
+    desired = "enabled" if operation == "enable" else "disabled"
+    pending = [item for item in entries if entry_status(item, location["config"]) != desired]
+    lines = [f"ACTION: {operation.upper()} {query}", f"CONFIG: {location['config']}"]
+    if not pending:
+        lines.append(f"RESULT: no change needed; all {len(entries)} target(s) are already {desired}")
+        return lines
+    for item in pending:
+        current = entry_status(item, location["config"])
+        lines.extend([
+            f"TARGET: {item.get('display_name') or item['id']} [{item['kind']}]",
+            f"STATE: {current} -> {desired}",
+        ])
+        if item.get("toggle_mode") == "config":
+            lines.append("MODE: config-only; no skill files will be moved")
+        else:
+            lines.append("MODE: move the top-level bundle and keep a receipt")
+            lines.append(f"SOURCE: {item['source_path']}")
+            lines.append(f"DISABLED / RESTORE PATH: {item['disabled_path']}")
+        if item.get("source_confidence") == "unknown":
+            lines.append("WARNING: restore source is unknown; enabling will be refused")
+    lines.append(f"RESULT: {len(pending)} target(s) will change")
+    return lines
+
+
 def operate(location: dict[str, Path], registry: dict, query: str, operation: str) -> Path | None:
-    entries = select_entries(query, registry)
+    entries = select_entries(query, registry, location["config"])
     if operation == "enable" and any(item.get("source_confidence") == "unknown" for item in entries):
         unknown = ", ".join(item["id"] for item in entries if item.get("source_confidence") == "unknown")
         raise SystemExit(f"source path is unknown for {unknown}; add it to registry.json before enabling")
@@ -730,7 +828,7 @@ def operate(location: dict[str, Path], registry: dict, query: str, operation: st
 
 
 def set_source(location: dict[str, Path], registry: dict, query: str, source: Path) -> None:
-    matches = select_entries(query, registry)
+    matches = select_entries(query, registry, location["config"])
     if len(matches) != 1:
         raise SystemExit("set-source requires one exact registry entry; use its ID")
     item = matches[0]
@@ -791,6 +889,7 @@ def build_context_report(location: dict[str, Path], registry: dict) -> dict:
         "active_bundles": active_bundles,
         "disabled_bundles": disabled_bundles,
         "collisions": collisions,
+        "entries": context_targets(location, registry),
     }
 
 
@@ -834,22 +933,15 @@ def format_context_report(report: dict) -> str:
     lines = [
         f"EXACT RUNTIME INJECTION: {report['runtime_injection']['status']}",
         report["runtime_injection"]["note"],
+        "",
+        "NUMBERED INVENTORY (use the position with st on/off/note)",
+        "#    STATUS     KIND             NAME",
     ]
-    for title, key in (
-        ("EXPECTED ACTIVE SKILLS", "expected_active"),
-        ("DISABLED / READY TO ENABLE", "disabled_ready"),
-        ("ACTIVE PLUGIN BUNDLES", "active_bundles"),
-        ("DISABLED PLUGIN BUNDLES", "disabled_bundles"),
-        ("REHYDRATION COLLISIONS", "collisions"),
-    ):
-        items = report[key]
-        lines.extend(["", f"{title} ({len(items)})"])
-        for index, item in enumerate(items, 1):
-            lines.extend([
-                f"{index}. {item['name']} [{item['kind']}]",
-                f"   source: {item['source_path']}",
-                f"   disabled: {item['disabled_path']}",
-            ])
+    for target in report.get("entries", []):
+        lines.append(
+            f"{target['position']:>3}  {target['state']:<9}  {target['kind']:<16}  {target['name']}"
+        )
+    lines.extend(["", "JSON: add --json for machine-readable positions, states, IDs, and paths."])
     return "\n".join(lines) + "\n"
 
 
@@ -917,60 +1009,116 @@ done
     return location["notifier_script"], location["notifier_plist"]
 
 
-def print_entries(entries: list[dict], as_json: bool) -> None:
+def print_entries(entries: list[dict], as_json: bool, color: bool = False) -> None:
     rendered = []
     for item in entries:
         rendered.append({**item, "observed_state": entry_status(item)})
     if as_json:
         print(json.dumps(rendered, indent=2))
         return
-    for item in rendered:
-        print(f"{item['observed_state']:9} {item['display_name'] or item['id']}  {item['id']}")
+    lines = []
+    for index, item in enumerate(rendered, 1):
+        state = item["observed_state"]
+        state_color = {
+            "enabled": ANSI_GREEN,
+            "disabled": ANSI_YELLOW,
+            "collision": ANSI_RED,
+        }.get(state, ANSI_RED)
+        lines.append(
+            f"{index:>3}  {colorize(f'{state:<9}', state_color, color)}  "
+            f"{item['display_name'] or item['id']}  ({item['id']})"
+        )
+    print("\n".join(format_box("SKILL TOGGLE RESULTS", lines or ["no matches"], color)))
 
 
-def print_context_report(report: dict, as_json: bool) -> None:
+def print_context_report(report: dict, as_json: bool, color: bool = False) -> None:
     if as_json:
         print(json.dumps(report, indent=2))
         return
     runtime = report["runtime_injection"]
-    print(f"EXACT RUNTIME INJECTION: {runtime['status']}")
-    print(runtime["note"])
-    for title, key in (
-        ("EXPECTED ACTIVE SKILLS", "expected_active"),
-        ("DISABLED / READY TO ENABLE", "disabled_ready"),
-        ("ACTIVE PLUGIN BUNDLES", "active_bundles"),
-        ("DISABLED PLUGIN BUNDLES", "disabled_bundles"),
-        ("REHYDRATION COLLISIONS", "collisions"),
-    ):
-        items = report[key]
-        print(f"\n{title} ({len(items)})")
-        for index, item in enumerate(items, 1):
-            print(f"{index}. {item['name']} [{item['kind']}]")
-            print(f"   source: {item['source_path']}")
-            print(f"   disabled: {item['disabled_path']}")
+    lines = [
+        f"EXACT RUNTIME INJECTION: {runtime['status']}",
+        runtime["note"],
+        "",
+        "#    STATUS     KIND             NAME",
+    ]
+    for target in report.get("entries", []):
+        state = target["state"]
+        state_color = {
+            "enabled": ANSI_GREEN,
+            "disabled": ANSI_YELLOW,
+            "mixed": ANSI_YELLOW,
+            "collision": ANSI_RED,
+            "missing": ANSI_RED,
+        }.get(state, ANSI_RED)
+        status = colorize(f"{state:<9}", state_color, color)
+        lines.append(f"{target['position']:>3}  {status}  {target['kind']:<16}  {target['name']}")
+    lines.extend([
+        "",
+        "Use the number: st --dry-run off 12, then st off 12.",
+        "Use --yes for a non-interactive confirmed change; --json is machine-readable.",
+    ])
+    print("\n".join(format_box("CODEX SKILL TOGGLE", lines, color)))
 
 
-def print_notes(notes: list[dict], as_json: bool) -> None:
+def print_notes(notes: list[dict], as_json: bool, color: bool = False) -> None:
     if as_json:
         print(json.dumps(notes, indent=2))
         return
     if not notes:
-        print("no notes")
+        print("\n".join(format_box("SKILL NOTES", ["no notes"], color)))
         return
+    lines = []
     for note in notes:
-        print(f"{note['id']}  {note['target_name']} [{note['target_kind']}]")
-        print(f"  {note['text']}")
-        print(f"  updated: {note['updated_at']}")
+        lines.extend([
+            f"{note['target_name']} [{note['target_kind']}]  {note['id']}",
+            f"  {note['text']}",
+            f"  updated: {note['updated_at']}",
+        ])
+    print("\n".join(format_box("SKILL NOTES", lines, color)))
+
+
+def print_operation_plan(lines: list[str], color: bool) -> None:
+    rendered = []
+    for line in lines:
+        if line.startswith("ACTION:"):
+            rendered.append(colorize(line, ANSI_BOLD + ANSI_CYAN, color))
+        elif line.startswith("WARNING:"):
+            rendered.append(colorize(line, ANSI_RED, color))
+        elif line.startswith("RESULT:"):
+            rendered.append(colorize(line, ANSI_GREEN, color))
+        else:
+            rendered.append(line)
+    print("\n".join(format_box("PLANNED SKILL CHANGE", rendered, color)))
+
+
+def confirm_operation(lines: list[str], *, assume_yes: bool, dry_run: bool, color: bool) -> bool:
+    print_operation_plan(lines, color)
+    if dry_run:
+        print("DRY RUN: no changes made")
+        return False
+    if assume_yes:
+        return True
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        print("Refusing an unconfirmed change without a terminal. Re-run with --yes or --dry-run.", file=sys.stderr)
+        raise SystemExit(2)
+    try:
+        answer = input("Proceed? [y/N] ").strip().casefold()
+    except EOFError:
+        answer = ""
+    if answer not in {"y", "yes"}:
+        print("Cancelled; no changes made.")
+        return False
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--codex-home",
-        type=Path,
-        default=Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))),
-    )
+    parser.add_argument("--codex-home", type=Path, default=Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))))
     parser.add_argument("--json", action="store_true", help="emit JSON for list/find/verify")
+    parser.add_argument("--color", choices=("auto", "always", "never"), default="auto", help="color human output")
+    parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt for a toggle")
+    parser.add_argument("--dry-run", action="store_true", help="show a toggle plan without changing anything")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("init", help="build the registry from receipts and disabled folders")
     subparsers.add_parser("list", help="list every registered entry")
@@ -995,9 +1143,12 @@ def main(argv: list[str] | None = None) -> int:
     for command, aliases in (("enable", ["on"]), ("disable", ["off"])):
         command_parser = subparsers.add_parser(command, aliases=aliases, help=f"{command} a skill or plugin bundle")
         command_parser.add_argument("query")
+        command_parser.add_argument("--yes", action="store_true", default=argparse.SUPPRESS, help="skip the confirmation prompt")
+        command_parser.add_argument("--dry-run", action="store_true", default=argparse.SUPPRESS, help="show the plan without changing anything")
 
     args = parser.parse_args(argv)
     location = paths(args.codex_home.expanduser().resolve())
+    color = should_color(args.color, args.json)
     if args.command == "init":
         registry = seed_registry(location["home"])
         save_registry(location["registry"], registry)
@@ -1008,17 +1159,17 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"registry missing: run {Path(__file__).name} init")
     registry = load_registry(location["registry"])
     if args.command == "list":
-        print_entries(registry["entries"], args.json)
+        print_entries(registry["entries"], args.json, color)
         return 0
     if args.command == "find":
-        print_entries(resolve(args.query, registry), args.json)
+        print_entries(resolve(args.query, registry), args.json, color)
         return 0
     if args.command == "note":
         note = add_note(location, registry, args.query, " ".join(args.text))
         print(f"note added: {note['id']} -> {note['target_name']}")
         return 0
     if args.command == "notes":
-        print_notes(list_notes(location, registry, args.query), args.json)
+        print_notes(list_notes(location, registry, args.query), args.json, color)
         return 0
     if args.command == "delete-note":
         if not delete_note(location, args.note_id):
@@ -1026,7 +1177,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"note deleted: {args.note_id}")
         return 0
     if args.command in {"context", "report"}:
-        print_context_report(build_context_report(location, registry), args.json)
+        print_context_report(build_context_report(location, registry), args.json, color)
         return 0
     if args.command == "reconcile":
         receipt, repaired = reconcile(location, registry)
@@ -1058,8 +1209,12 @@ def main(argv: list[str] | None = None) -> int:
         set_source(location, registry, args.query, args.source)
         return 0
     operation = {"on": "enable", "off": "disable"}.get(args.command, args.command)
+    plan = operation_plan(location, registry, args.query, operation)
+    if not confirm_operation(plan, assume_yes=args.yes, dry_run=args.dry_run, color=color):
+        return 0
     receipt = operate(location, registry, args.query, operation)
-    print(f"{operation}: no change needed" if receipt is None else f"{operation}: receipt {receipt}")
+    result = f"{operation}: no change needed" if receipt is None else f"{operation}: receipt {receipt}"
+    print("\n".join(format_box("SKILL TOGGLE RESULT", [colorize(result, ANSI_GREEN, color)], color)))
     return 0
 
 

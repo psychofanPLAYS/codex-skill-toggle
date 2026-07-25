@@ -418,6 +418,59 @@ class SkillToggleTests(unittest.TestCase):
             self.assertEqual(len(notes), 1)
             self.assertEqual(notes[0]["target_name"], "canva")
 
+    def test_box_formatter_adds_color_only_when_requested(self):
+        plain = module.format_box("CODEX SKILL TOGGLE", ["enabled  model-search"], color=False)
+        colored = module.format_box("CODEX SKILL TOGGLE", ["enabled  model-search"], color=True)
+
+        self.assertTrue(plain[0].startswith("┌"))
+        self.assertTrue(plain[-1].startswith("└"))
+        self.assertNotIn("\033[", "\n".join(plain))
+        self.assertIn("\033[", "\n".join(colored))
+
+    def test_color_mode_auto_disables_when_output_is_not_a_tty(self):
+        with patch.object(module.sys.stdout, "isatty", return_value=False):
+            self.assertFalse(module.should_color("auto", False))
+        self.assertTrue(module.should_color("always", False))
+        self.assertFalse(module.should_color("never", False))
+
+    def test_context_targets_combine_states_and_assign_positions(self):
+        with TemporaryDirectory() as temp:
+            home = Path(temp) / "codex"
+            active = home / "skills" / "active-skill"
+            disabled = home / "skills-disabled" / "local" / "disabled-skill"
+            active.mkdir(parents=True)
+            disabled.mkdir(parents=True)
+            (active / "SKILL.md").write_text("name: active-skill\n", encoding="utf-8")
+            (disabled / "SKILL.md").write_text("name: disabled-skill\n", encoding="utf-8")
+            registry = {"version": 1, "entries": [
+                {"id": "local:active", "kind": "local_skill", "display_name": "active-skill", "aliases": ["active-skill"], "source_path": str(active), "disabled_path": str(home / "skills-disabled" / "local" / "active-skill"), "state": "enabled"},
+                {"id": "local:disabled", "kind": "local_skill", "display_name": "disabled-skill", "aliases": ["disabled-skill"], "source_path": str(home / "skills" / "disabled-skill"), "disabled_path": str(disabled), "state": "disabled"},
+            ]}
+
+            targets = module.context_targets(module.paths(home), registry)
+
+            self.assertEqual([target["position"] for target in targets], [1, 2])
+            self.assertEqual({target["state"] for target in targets}, {"enabled", "disabled"})
+            self.assertEqual(module.select_entries("2", registry)[0]["display_name"], "disabled-skill")
+
+    def test_operation_plan_explains_file_and_config_actions(self):
+        with TemporaryDirectory() as temp:
+            home = Path(temp) / "codex"
+            source = home / "plugins" / "cache" / "openai-curated" / "canva"
+            disabled = home / "skills-disabled" / "plugins" / "cache" / "openai-curated" / "canva"
+            source.mkdir(parents=True)
+            (source / "marker").write_text("bundle", encoding="utf-8")
+            item = make_entry(home)
+            item.update({"source_path": str(source), "disabled_path": str(disabled)})
+            registry = {"version": 1, "entries": [item]}
+            location = module.paths(home)
+
+            plan = module.operation_plan(location, registry, item["id"], "disable")
+
+            self.assertIn("disable", " ".join(plan).lower())
+            self.assertIn(str(source), "\n".join(plan))
+            self.assertIn(str(disabled), "\n".join(plan))
+
 
 if __name__ == "__main__":
     unittest.main()
